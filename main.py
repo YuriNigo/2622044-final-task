@@ -43,26 +43,37 @@ while True:
         break
 
     soup = BeautifulSoup(response.text, 'html.parser')
-    repos = soup.select('li, div.Box-row, article, div[data-filterable-for]')
+    name_links = soup.select('a[itemprop="name codeRepository"], h3 a, h4 a')
 
     page_saved = 0
-    for repo in repos:
-        name_tag = repo.select_one('a[itemprop="name codeRepository"], a.Link--primary, h3 a')
-        if not name_tag:
+    for name_tag in name_links:
+        href = name_tag.get('href', '')
+        if not href.startswith('/google/') or href.count('/') != 2:
             continue
 
-        repo_name = name_tag.text.strip()
+        repo_name = name_tag.get_text(strip=True)
         if not repo_name or repo_name in seen_names:
             continue
         seen_names.add(repo_name)
 
-        # 主要言語
-        lang_tag = repo.select_one('span[itemprop="programmingLanguage"], [aria-label*="language"]')
-        language = lang_tag.text.strip() if lang_tag else "N/A"
+        # リポジトリ1件分のカード要素を取得
+        card = name_tag.find_parent('li') or name_tag.find_parent('div', class_='Box-row') or name_tag.parent.parent
 
-        # スター数
-        star_tag = repo.select_one('a[href$="/stargazers"], a[href*="/stargazers"]')
-        stars = star_tag.text.strip() if star_tag else "0"
+        # 主要言語の取得
+        language = "N/A"
+        lang_tag = card.select_one('span[itemprop="programmingLanguage"]')
+        if lang_tag and lang_tag.get_text(strip=True):
+            language = lang_tag.get_text(strip=True)
+        else:
+            color_dot = card.select_one('span.repo-language-color, span[style*="background-color"]')
+            if color_dot and color_dot.parent:
+                lang_text = color_dot.parent.get_text(strip=True)
+                if lang_text:
+                    language = lang_text
+
+        # スター数の取得
+        star_tag = card.select_one('a[href$="/stargazers"], a[href*="/stargazers"]')
+        stars = star_tag.get_text(strip=True) if star_tag else "0"
 
         cursor.execute('''
         INSERT INTO google_repos (repo_name, language, stars)
@@ -73,7 +84,7 @@ while True:
 
     conn.commit()
 
-    # 次のページヘのボタンが存在しない、または新しく取得できたリポジトリがない場合は終了
+    # 次のページが存在しない、または新しく取得できたリポジトリがない場合は終了
     next_button = soup.select_one('a.next_page, a[rel="next"]')
     if page_saved == 0 or not next_button:
         break
